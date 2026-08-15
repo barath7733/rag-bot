@@ -1,68 +1,92 @@
 """
-Embedding generation using an open-source sentence-transformers model.
+Lightweight Gemini API based embeddings.
 
-The embedding model name is fully configurable via the EMBEDDING_MODEL
-environment variable. The actual output vector dimension is derived
-directly from the loaded model at runtime — it is never assumed to be
-1536 or any other fixed number — and is exposed via
-`get_embedding_dimension()` so the Pinecone index can be created with
-a matching dimension.
+Uses Gemini Embedding API instead of local sentence-transformers,
+so the application does not load PyTorch/transformer models into
+Render's limited RAM environment.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
+import os
 
-from sentence_transformers import SentenceTransformer
-
-from app.config import get_settings
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger("rag_chatbot.embeddings")
 
-_model_lock = threading.Lock()
-_model: SentenceTransformer | None = None
-_model_name: str | None = None
+EMBEDDING_MODEL = "gemini-embedding-001"
+
+# Keep 384 dimensions so the existing Pinecone index can remain compatible
+# with the previous all-MiniLM-L6-v2 embedding dimension.
+EMBEDDING_DIMENSION = 384
+
+_client: genai.Client | None = None
 
 
-def _load_model() -> SentenceTransformer:
-    global _model, _model_name
-    settings = get_settings()
+def _get_client() -> genai.Client:
+    global _client
 
-    with _model_lock:
-        if _model is not None and _model_name == settings.embedding_model:
-            return _model
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
 
-        logger.info("Loading embedding model '%s' (first load may take a moment)...", settings.embedding_model)
-        _model = SentenceTransformer(settings.embedding_model)
-        _model_name = settings.embedding_model
-        logger.info(
-            "Embedding model loaded. Vector dimension = %d",
-            _model.get_sentence_embedding_dimension(),
-        )
-        return _model
+        if not api_key:
+            raise RuntimeError(
+                "GEMINI_API_KEY environment variable is not configured."
+            )
+
+        _client = genai.Client(api_key=api_key)
+
+    return _client
 
 
 def get_embedding_dimension() -> int:
-    """Return the true output dimension of the configured embedding model."""
-    model = _load_model()
-    dimension = model.get_sentence_embedding_dimension()
-    if dimension is None:
-        raise RuntimeError("Could not determine embedding dimension from the loaded model.")
-    return int(dimension)
+    """Return the embedding vector dimension."""
+    return EMBEDDING_DIMENSION
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
-    """Embed a batch of texts (document chunks). Returns one vector per text."""
+    """Generate embeddings for multiple document chunks."""
+
     if not texts:
         return []
-    model = _load_model()
-    vectors = model.encode(texts, show_progress_bar=False, convert_to_numpy=True, normalize_embeddings=True)
-    return [vector.tolist() for vector in vectors]
+
+    client = _get_client()
+
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=texts,
+        config=types.EmbedContentConfig(
+            output_dimensionality=EMBEDDING_DIMENSION,
+            task_type="RETRIEVAL_DOCUMENT",
+        ),
+    )
+
+    if not result.embeddings:
+        raise RuntimeError("Gemini returned no embeddings.")
+
+    return [embedding.values for embedding in result.embeddings]
 
 
 def embed_query(text: str) -> list[float]:
-    """Embed a single user query."""
-    model = _load_model()
-    vector = model.encode([text], show_progress_bar=False, convert_to_numpy=True, normalize_embeddings=True)[0]
-    return vector.tolist()
+    """Generate an embedding for a user query."""
+
+    if not text.strip():
+        return []
+
+    client = _get_client()
+
+    result = client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=types.EmbedContentConfig(
+            output_dimensionality=EMBEDDING_DIMENSION,
+            task_type="RETRIEVAL_QUERY",
+        ),
+    )
+
+    if not result.embeddings:
+        raise RuntimeError("Gemini returned no embedding.")
+
+    return result.embeddings[0].values

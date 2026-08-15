@@ -5,10 +5,10 @@ pydantic==2.10.4
 pydantic-settings==2.7.1
 groq==0.13.1
 pinecone==5.4.2
-sentence-transformers==3.3.1
 pypdf==5.1.0
 python-multipart==0.0.20
 jinja2==3.1.5
 httpx==0.28.1
 gunicorn
 tavily-python
+google-genai

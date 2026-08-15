@@ -99,8 +99,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # Frontend
 # --------------------------------------------------------------------------
 
+# Frontend
+# --------------------------------------------------
+
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request}
+    )
 
 
 # --------------------------------------------------------------------------

@@ -118,11 +118,7 @@ async def index(request: Request) -> HTMLResponse:
 async def health() -> HealthResponse:
     warnings = validate_required_settings()
     embedding_dimension: int | None = None
-    try:
-        embedding_dimension = get_embedding_dimension()
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"Embedding model could not be loaded: {exc}")
-
+    
     pinecone_ready = False
     if settings.pinecone_api_key and embedding_dimension is not None:
         pinecone_ready = is_index_ready()
